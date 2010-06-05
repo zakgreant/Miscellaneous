@@ -1,10 +1,18 @@
 generate sparklines/tiny graphs of recent changes to mediawiki articles
 
-*requires:* firefox 3.5+ with the greasemonkey add-on installed
+requirements
+------------
+* Firefox 3.5+
+* Greasemonkey 
+* jQuery 1.3 [1] 
+* jQuery Sparklines 1.5.1 [1]
+
+[1] these libraries are automatically downloaded for use with this 
+	script by greasemonkey.
 
 overview
 --------
-this small greasemonkey script displays three small sparklines
+this small greasemonkey script displays five small sparklines
 (http://en.wikipedia.org/wiki/Sparkline) in the top left corner of
 articles managed by recent versions of mediawiki (v1.16+).
 
@@ -12,10 +20,10 @@ each sparkline consists of a line graph that shows bytes changed over
 time.  the line graph is overlayed on top of a bar graph that shows the
 number of commits made.
 
-the first sparkline displays changes in the last three years at one
-month intervals, the next displays changes in the last month in one day
-intervals and the last displays changes made over the last day in 1 hour
-intervals.
+the intervals are:
+* the last three years at one month intervals
+* the last six months in one week intervals
+* the last week in 6 hour intervals
 
 see the screenshot in this directory for an overview of what the
 sparklines look like.

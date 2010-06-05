@@ -12,80 +12,73 @@
 // todo: display other graphs - eg. top contributors
 // todo: add windowshade feature
 // todo: make sparklines draggable
-// todo: allow configuration of the number of history records to be fetched
+// todo: allow configuration of periods - inc. length, number displayed, etc.
+// todo: ignore or flag reverts and undos
+// todo: tidy and comment code
 
-// only run the script for MediaWiki article pages
-if( /^MediaWiki/.test(document.getElementsByName('generator')[0].content) && 'view' == unsafeWindow.wgAction && unsafeWindow.wgArticleId ){
+var scriptName = 'MW History Sparkline';
+var scriptVersion = '0.2';
+var scriptLocation = 'http://github.com/zakgreant/Miscellaneous/tree/master/mw_history_sparkline';
 
+// require login so that it is easier to track overuse of this script
+if( /^Special:UserLogin/.test(unsafeWindow.wgPageName) ){
+	// don't bug people when they are logging in
+
+} else if( null === unsafeWindow.wgUserName ){
+	window.alert( 'You must be logged in to ' + unsafeWindow.wgServer + ' to use the ' + scriptName +' Greasemonkey script.' );
+
+// only run the script for MediaWiki article pages on MediaWiki servers with the API enabled
+} else if( true === unsafeWindow.wgEnableAPI && 'view' == unsafeWindow.wgAction && unsafeWindow.wgArticleId ){
 	// fetch history page, grab data, then show sparklines for current wikipedia/mediawiki page
 	GM_xmlhttpRequest({
 		method: 'GET',
-		url: makeHistoryPageURL( window.location.href, 100 ),
+		headers: {
+			'Accept-Encoding': 'gzip',
+			'User-Agent': scriptName + ' v' + scriptVersion + ' from ' + scriptLocation + ' (used by ' + unsafeWindow.wgUserName + '@' + unsafeWindow.wgDBname + ')'
+		},
+		url: makeHistoryPageURL( window.location.href ),
 		onload: function(response) {
 			if(response.status == 200) {
-				makeSparklines( getHistoryLog(response.responseText) );
+				makeSparklines( response.responseText );
 			}
 		}
 	});
 }
 
 // make URL for current articles history page
-function makeHistoryPageURL( pageURL, limit ){
-	var historyURL = '/w/index.php?action=history&limit=' + limit + '&title=';
-	var re = RegExp('(https?://[^/]+)/.+/([^/]+)');
-	if( ! re.test(pageURL) ){
-		throw ('Could not find history URL for page ' + pageURL);
-	}
-	return pageURL.replace(re, '$1' + historyURL + '$2');
+function makeHistoryPageURL( pageURL ){
+	var d = new Date();
+	var revisionQuery = unsafeWindow.wgServer + '/w/api.php?'
+		+ 'action=query'
+		+ '&format=json'
+		+ '&prop=revisions'
+		+ '&rvend=' + (d.getUTCFullYear() - 3) + '-' + pad( d.getUTCMonth() ) + '-' + pad( d.getUTCDate() )+'T' + pad( d.getUTCHours() ) +':' + pad( d.getUTCMinutes() ) +':' + pad( d.getUTCSeconds() )+'Z'
+		+ '&rvprop=size|timestamp'
+		+ '&pageids=' + unsafeWindow.wgArticleId;
+	return( revisionQuery );
 }
 
-// fetch and parse history entries from HTML
-function getHistoryLog( html ){
-	var history = [];	// array to store parsed history entries
-	var dom = (new DOMParser()).parseFromString( html, 'application/xml' );
-	var pagehistory = dom.getElementById('pagehistory').getElementsByTagName('li');	// grab individual history entries
-
-	if( ! pagehistory ){
-		GM_log( html );
-		throw 'History could not be retrieved.';
-	}
-
-	// walk over history entries, grabbing fields
-	for( var i = 0; i < pagehistory.length; ++i ){
-		var item = pagehistory[i];
-		
-		var user = item.getElementsByClassName('mw-userlink')[0] ? item.getElementsByClassName('mw-userlink')[0].title : '';	// fetch user handle & discard node
-		var comment = item.getElementsByClassName('comment')[0] ? item.getElementsByClassName('comment')[0].textContent : '';	// fetch comment & discard node
-		var bytes = item.getElementsByClassName('history-size')[0] ? parseInt( item.getElementsByClassName('history-size')[0].textContent.replace(/[^0-9]/g, '') ) : 0; // fetch comment & discard node
-
-		// walk through anchors and grab anchor that contains the date information
-		var anchors = item.getElementsByTagName('a');
-		for( var ii = 0; ii < anchors.length; ++ii ){
-			if( ! /^[0-9]{2}:[0-9]{2}, /.test(anchors[ii].textContent) ){ continue; }	// skip over anything that isn't a time and date
-
-			var datetime = anchors[ii].textContent.split(', ');		// clean time and date info
-			datetime = Date.parse(datetime[1] + ' ' + datetime[0]);	// convert human-readable date into number of milliseconds since the epoch
-			break;
-		}
-
-		history.push({ bytes: bytes, comment: comment, datetime: datetime, user: user});
-	}
-
-	return history;
-}
 
 // process data and generate sparklines
-function makeSparklines( history ){
+function makeSparklines( json ){
 	var data = {};			// store sparkline data
 	var day = 86400000;
 	var now = Date.now();
+	var revisions = [];		// set default value for revisions - important when no revisions are returned
 
+	var query = JSON.parse(json).query; 
+	for( page in query.pages ){
+		if( 'revisions' in query.pages[page] ) {
+			revisions = query.pages[page].revisions;
+		}
+		break;
+	}
 
 	// periods to make sparklines for. order of array elements matters
 	var periods = [
 		{label:'3years', length:day*365.25*36, segments:36, title:"last 3 years"},
-		{label:'month', length:day*30, segments:30, title:"last month"},
-		{label:'day', length:day, segments:24, title:"last 24 hours"},
+		{label:'6months', length:day*30*6, segments:24, title:"last six months"},
+		{label:'week', length:day*7, segments:28, title:"last week"},
 	];
 
 	for( i in periods ){
@@ -99,13 +92,13 @@ function makeSparklines( history ){
 			var bytesPerSegment = 0;
 			var changesPerSegment = 0;
 
-			if( counter == history.length ){
+			if( 0 !== counter && counter == revisions.length ){
 				bytesPerSegment = null;
 				changesPerSegment = null;
 			}
 
-			while( counter < history.length && history[counter].datetime > (now - (period.length / period.segments) * n) ){
-				bytesPerSegment += history[counter].bytes;
+			while( counter < revisions.length && Date.parse(revisions[counter].timestamp) > (now - (period.length / period.segments) * n) ){
+				bytesPerSegment += revisions[counter].size;
 				++changesPerSegment;
 				++counter;
 			}
@@ -117,19 +110,25 @@ function makeSparklines( history ){
 	}
 
 	var sparkline = document.createElement('div');
+	sparkline.style.position = 'absolute';
 
 	for( p in periods ){
 		var period = periods[p];
-		sparkline.innerHTML += '<div style="color: #AAA; font-size:7pt; background: #FFF; padding:0.25em; position:relative; float:left; z-index:100; text-align:center;">'
+		sparkline.innerHTML += '<div style="color: #AAA; font-size:7pt; background: #FFF; padding:0.1em; position:relative; float:left; z-index:100; text-align:center;">'
 								+ '<span id="sparkline_' + period.label + '" style="border-bottom:thin solid #CCF;position:absolute;"></span>'
 								+ '<span id="sparkline_changes_' + period.label + '" style=""></span><br />'
 								+ '<span style="">' + period.title + '</span>'
 							+ '</div>';
 	}
 
-	var elapsedTime = Math.floor((now - history[history.length-1].datetime) / day);
+	if( revisions.length ){
+		var elapsedTime = Math.floor( (now - Date.parse(revisions[revisions.length-1].timestamp)) / day );
+	} else {
+		var elapsedTime = 365.25 * 3;
+	}
+
 	sparkline.innerHTML += '<span style="color: #AAA; font-size:7pt; background: #FFF; top:0.75em; padding:1em; position:relative; z-index:100;"> ' 
-						+ history.length + ' changes in the last ' + (1 == elapsedTime ? 'day' : elapsedTime +  ' days') + '</span>';
+						+ revisions.length + ' changes in the last ' + (1 == elapsedTime ? 'day' : elapsedTime +  ' days') + '</span>';
 	
 	document.body.insertBefore( sparkline, document.body.firstChild );
 
@@ -140,6 +139,9 @@ function makeSparklines( history ){
 	}
 }
 
+function pad( val ){
+	return val < 10 ? '0' + val : val;
+}
 /*
 	Simplified BSD License
 
